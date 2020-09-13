@@ -1,4 +1,4 @@
-#include <bitset>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -18,35 +18,18 @@
 #include <unistd.h> // close(...)
 
 // Reference material: https://en.wikipedia.org/wiki/IPv4_header_checksum
-// This is probably a terrible implementation because I'm essentially writing a
-// function that is implemented at the hardware level.
-// After checking with compiler explorer, it is indeed terrible (less so with
-// -O3, at least it will then use single bit values and recognizes the
-// std::bitset as a bitstring).
 template <size_t N>
-static inline std::uint16_t compute_checksum(std::bitset<N> const &bs) {
-  std::bitset<16> checksum{0};
+static inline std::uint16_t
+compute_checksum(std::array<std::uint16_t, N> const &bin_vec) {
+  std::uint32_t checksum{0};
 
-  // For every 2 bytes from the bitset
-  for (auto i = 0; i < N; i += 16) {
-    bool carry_out{0};
-    bool aux;
-    for (auto j = 0; j < 16; j++) {
-      // This is a full-adder
-      aux = carry_out ^ checksum[j] ^ bs[i + j];
-      carry_out = (checksum[j] && bs[i + j]) ||
-                  (checksum[j] ^ bs[i + j] && (carry_out));
-      checksum[j] = aux;
-    }
-    auto k = 0;
-    while (k < 16 && carry_out) {
-      aux = carry_out || checksum[k];
-      carry_out = carry_out && checksum[k];
-      checksum[k] = aux;
-    }
+  for (const std::uint16_t &bin_word : bin_vec) {
+    checksum += bin_word;
   }
-
-  return static_cast<std::uint16_t>(checksum.flip().to_ulong());
+  if ((checksum >> 16) & 1) {
+    return ~(static_cast<std::uint16_t>(checksum) + 1);
+  }
+  return ~(static_cast<std::uint16_t>(checksum));
 }
 
 int main(int argc, char *const argv[]) {
@@ -124,7 +107,7 @@ int main(int argc, char *const argv[]) {
   ip_header.check = 0;
 
   // Let's compute the checksum.
-  std::bitset<8 * sizeof(ip_header)> ip_header_bin;
+  std::array<std::uint16_t, sizeof(ip_header) / 2> ip_header_bin;
   memcpy(&ip_header_bin, &ip_header, sizeof ip_header);
 
   ip_header.check = compute_checksum(ip_header_bin);
