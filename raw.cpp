@@ -1,6 +1,4 @@
 #include <array>
-#include <cstddef>
-#include <cstdint>
 #include <cstdlib>
 #include <iostream>
 #include <stdexcept>
@@ -12,7 +10,6 @@
 #include <netinet/ip.h>  // ip header
 #include <netinet/udp.h> // udp header --> udphdr
 
-#include <string>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h> // close(...)
