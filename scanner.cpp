@@ -12,18 +12,19 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
+#include <unistd.h> // close(...)
 
 int main(int argc, char *const argv[]) {
 
   if (argc < 4) {
     std::cout << "Usage: ./scanner <ip> <low port> <high port>";
+    exit(0);
   }
 
   char const *ip{argv[1]};
   int const low_port{std::atoi(argv[2])};
   int const high_port{std::atoi(argv[3])};
 
-  // We rely on the non-blocking behavior to not get stuck on closed ports.
   int sfd;
   if ((sfd = socket(AF_INET, (SOCK_DGRAM), 0)) == -1) {
     char const *error = strerror(errno);
@@ -92,6 +93,9 @@ int main(int argc, char *const argv[]) {
       thr.detach();
     }
   }
+
+  // We close the socket.
+  close(sfd);
 
   for (auto const &pair : table) {
     std::cout << "Port: " << pair.first << std::endl;
