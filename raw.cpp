@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <array>
 #include <cstdlib>
 #include <iostream>
@@ -10,9 +11,73 @@
 #include <netinet/ip.h>  // ip header
 #include <netinet/udp.h> // udp header --> udphdr
 
+#include <string>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h> // close(...)
+
+#include <iomanip>
+#include <sstream>
+
+std::string get_byte_hexdump(void *buffer, int buflen) {
+  /**
+      Author Benedikt H. Thordarson.
+      Given buffer b, and length of b in bytes bufen,
+      print buffer in wireshark format.
+      output works for wireshark imports.
+  **/
+
+  // create byte buffer.
+  unsigned char *byte_buffer = (unsigned char *)buffer;
+  std::string hexdump = "";
+  for (int i = 0; i < buflen; i += 16) {
+    std::stringstream ss;
+    ss << std::hex << std::setfill('0');
+    // show addr offset
+    ss << std::setw(8) << std::hex << i;
+    int j = 0;
+
+    for (j = 0; j < 16; j++) {
+      // break before we go out of bounds
+      if (i + j == buflen) {
+        break;
+      }
+      // if we are at the 8B place, inject extra space
+      if (j % 8 == 0 && j != 0) {
+        ss << " ";
+      }
+      // inject space
+      ss << " " << std::hex << std::setw(2) << (unsigned int)byte_buffer[i + j];
+    }
+    // pad to length before we add our char printouts.
+    while (j < 16) {
+      ss << "   ";
+      j += 1;
+    }
+    // Add the char print.
+    ss << "\t| ";
+    for (j = 0; j < 16; j++) {
+      // do not go out of bounds.
+      if (i + j == buflen) {
+        break;
+      }
+      if (j % 8 == 0 && j != 0) {
+        ss << " ";
+      }
+      // if the character is not printable or is a newline, print a star.
+      if (byte_buffer[i + j] == (unsigned char)'\n' ||
+          !std::isprint(byte_buffer[i + j])) {
+        ss << "*";
+      } else {
+        ss << byte_buffer[i + j];
+      }
+    }
+    // add newline and append to dump.
+    ss << "\n";
+    hexdump += ss.str();
+  }
+  return hexdump;
+}
 
 // Reference material: https://en.wikipedia.org/wiki/IPv4_header_checksum
 template <size_t N>
@@ -23,10 +88,36 @@ compute_checksum(std::array<std::uint16_t, N> const &bin_vec) {
   for (const std::uint16_t &bin_word : bin_vec) {
     checksum += bin_word;
   }
-  if ((checksum >> 16) & 1) {
-    return ~(static_cast<std::uint16_t>(checksum) + 1);
+  while (checksum >> 16) {
+    checksum = (checksum & 0xFFFF)+(checksum >> 16);
   }
-  return ~(static_cast<std::uint16_t>(checksum));
+  return ~checksum;
+}
+
+static inline std::uint16_t compute_udp_checksum(struct udphdr const &header) {
+
+  struct pseudo_header {
+    std::uint32_t source;
+    std::uint32_t dest;
+    std::uint16_t protocol;
+    std::uint16_t len;
+  };
+
+  struct pseudo_header pseudo;
+  pseudo.source = header.source;
+  pseudo.dest = header.dest;
+  pseudo.protocol = htons(0x11);
+  pseudo.len = header.len;
+
+  std::cout << std::hex << pseudo.source << std::endl;
+  std::cout << std::hex << pseudo.dest << std::endl;
+  std::cout << std::hex << pseudo.protocol << std::endl;
+  std::cout << std::hex << pseudo.len << std::endl;
+
+  std::array<std::uint16_t, sizeof(pseudo_header) / 2> pseudo_header_bin;
+  memcpy(&pseudo_header_bin, &pseudo, sizeof(pseudo_header));
+
+  return compute_checksum(pseudo_header_bin);
 }
 
 int main(int argc, char *const argv[]) {
@@ -44,23 +135,25 @@ int main(int argc, char *const argv[]) {
   int const port{std::atoi(argv[2])};
 
   int sfd;
-  if ((sfd = socket(AF_INET, SOCK_RAW, IPPROTO_RAW)) == -1) {
+  if ((sfd = socket(AF_INET, SOCK_RAW, IPPROTO_UDP)) == -1) {
     char const *error = strerror(errno);
     char message[] = "Socket could not be created: ";
     throw std::runtime_error{strcat(message, error)};
   }
 
-  // This time we will bind the client to a set local port. This is because when
-  // crafting the packet, we need to indicate the source port.
-  struct sockaddr_in my_addr;
-
-  my_addr.sin_family = AF_INET;
-  my_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
-  my_addr.sin_port = htons(my_port);
-
-  if (bind(sfd, (const struct sockaddr *)&my_addr, sizeof(my_addr)) == -1) {
+  const int hdr_included = 1;
+  if (setsockopt(sfd, IPPROTO_IP, IP_HDRINCL, &hdr_included,
+                 sizeof(hdr_included)) < 0) {
     char const *error = strerror(errno);
-    char message[] = "Socket could not be bound: ";
+    char message[] = "Could not set IP_HDRINCL option: ";
+    throw std::runtime_error{strcat(message, error)};
+  }
+
+  struct sockaddr_in my_addr;
+  socklen_t my_addrlen = sizeof(my_addr);
+  if (getsockname(sfd, (struct sockaddr *)&my_addr, &my_addrlen) == -1) {
+    char const *error = strerror(errno);
+    char message[] = "Could not get port from socket: ";
     throw std::runtime_error{strcat(message, error)};
   }
 
@@ -73,29 +166,31 @@ int main(int argc, char *const argv[]) {
 
   // We start by filling the UDP header.
   struct udphdr udp_header;
-  udp_header.source = htons(my_port);
-  udp_header.dest = htons(port);
+  udp_header.source = my_addr.sin_addr.s_addr;
+  udp_header.uh_sport = my_addr.sin_port;
+  udp_header.dest = addr.sin_addr.s_addr;
+  udp_header.uh_dport = addr.sin_port;
 
   constexpr std::uint16_t length_udp{sizeof(struct udphdr) + sizeof(payload)};
   udp_header.len = htons(length_udp);
+  udp_header.check = 0;
 
   // Reference material: https://en.wikipedia.org/wiki/IPv4#Header
   struct iphdr ip_header;
   // We are using IPv4.
   ip_header.version = 4;
   // Internet Header Length (IHL)
-  ip_header.ihl = 5; // TODO: change this so its not hard-coded and based
-                     // on what we've filled up the struct with.
+  ip_header.ihl = 5;
   // Type Of Service (TOS)
   // Reference material: https://en.wikipedia.org/wiki/Type_of_service
   ip_header.tos = 0; // Best effort
   constexpr std::uint32_t length_total{sizeof(struct iphdr) + length_udp};
   ip_header.tot_len = length_total;
   // Identification
-  ip_header.id = 12345;
+  ip_header.id = 0;
   ip_header.frag_off = 0;
   // We do this with postcards too.
-  ip_header.saddr = inet_addr(my_ip);
+  ip_header.saddr = my_addr.sin_addr.s_addr;
   ip_header.daddr = addr.sin_addr.s_addr;
   ip_header.ttl = 0xFF;
   // Reference material:
@@ -105,9 +200,29 @@ int main(int argc, char *const argv[]) {
 
   // Let's compute the checksum.
   std::array<std::uint16_t, sizeof(ip_header) / 2> ip_header_bin;
-  memcpy(&ip_header_bin, &ip_header, sizeof ip_header);
+  memcpy(&ip_header_bin, &ip_header, sizeof(ip_header));
 
   ip_header.check = compute_checksum(ip_header_bin);
+  udp_header.check = compute_udp_checksum(udp_header);
+
+  u_char *packet;
+  packet = (u_char *)malloc(sizeof(ip_header) + sizeof(udp_header) +
+                            sizeof(payload));
+  memcpy(packet, &ip_header, sizeof(ip_header));
+  memcpy(packet + 20, &udp_header, sizeof(udp_header));
+  memcpy(packet + 28, &payload, sizeof(payload));
+
+  // std::cout << get_byte_hexdump(packet, sizeof(ip_header) +
+  // sizeof(udp_header) +
+  //                                           sizeof(payload))
+  //           << std::endl;
+
+  if (sendto(sfd, packet, ip_header.tot_len, 0, (struct sockaddr *)&addr,
+             sizeof(addr)) == -1) {
+    char const *error = strerror(errno);
+    char message[] = "sendto : ";
+    throw std::runtime_error{strcat(message, error)};
+  }
 
   close(sfd);
 }
