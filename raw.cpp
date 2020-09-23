@@ -1,9 +1,10 @@
 #include <algorithm>
 #include <array>
 #include <cstdlib>
+#include <cstring>
 #include <iostream>
 #include <stdexcept>
-#include <string.h>
+#include <vector>
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -79,57 +80,41 @@ std::string get_byte_hexdump(void *buffer, int buflen) {
   return hexdump;
 }
 
-// Reference material: https://en.wikipedia.org/wiki/IPv4_header_checksum
-template <size_t N>
-static inline std::uint16_t
-compute_checksum(std::array<std::uint16_t, N> const &bin_vec) {
-  std::uint32_t checksum = 0;
+struct pseudohdr {
+  u_int32_t source_address;
+  u_int32_t dest_address;
+  u_int8_t placeholder;
+  u_int8_t protocol;
+  u_int16_t udp_length;
+};
 
-  for (const std::uint16_t &bin_word : bin_vec) {
-    checksum += bin_word;
+unsigned short csum(unsigned short *ptr, int nbytes) {
+  register long sum;
+  unsigned short oddbyte;
+  register short answer;
+
+  sum = 0;
+  while (nbytes > 1) {
+    sum += *ptr++;
+    nbytes -= 2;
   }
-  std::cout << std::hex << checksum << std::endl;
-  while (checksum >> 16) {
-    checksum = (checksum & 0xFFFF)+(checksum >> 16);
-  }
-  return ~checksum;
-}
-
-static inline std::uint16_t compute_udp_checksum(struct udphdr const &udp_header, struct iphdr const& ip_header) {
-
-  struct pseudo_header {
-    std::uint32_t source;
-    std::uint32_t dest;
-    std::uint16_t protocol;
-    std::uint16_t len;
-  };
-
-  struct pseudo_header pseudo;
-  pseudo.source = inet_addr("130.208.24.6");
-  pseudo.dest = ip_header.daddr;
-  pseudo.protocol = ntohs(ip_header.protocol);
-  pseudo.len = udp_header.len;
-
-  std::cout << std::hex << pseudo.source << std::endl;
-  std::cout << std::hex << pseudo.dest << std::endl;
-  std::cout << std::hex << pseudo.protocol << std::endl;
-  std::cout << std::hex << pseudo.len << std::endl;
-
-  std::array<std::uint16_t, sizeof(pseudo_header) / 2> pseudo_header_bin;
-  memcpy(&pseudo_header_bin, &pseudo, sizeof(pseudo_header));
-
-  //std::cout << get_byte_hexdump(&pseudo_header_bin, sizeof(pseudo_header)) << std::endl;
-  for (auto &number : pseudo_header_bin) {
-    std::cout << std::hex << number << std::endl;
+  if (nbytes == 1) {
+    oddbyte = 0;
+    *((u_char *)&oddbyte) = *(u_char *)ptr;
+    sum += oddbyte;
   }
 
+  sum = (sum >> 16) + (sum & 0xffff);
+  sum = sum + (sum >> 16);
+  answer = (short)~sum;
 
-  return compute_checksum(pseudo_header_bin);
+  return (answer);
 }
 
 int main(int argc, char *const argv[]) {
 
-  constexpr char payload[] = "lol";
+  static std::string const payload = "hello";
+  constexpr char my_ip[] = "130.208.24.6";
 
   if (argc < 3) {
     std::cout << "Usage: ./raw <ip> <port>";
@@ -140,7 +125,7 @@ int main(int argc, char *const argv[]) {
   int const port{std::atoi(argv[2])};
 
   int sfd;
-  if ((sfd = socket(AF_INET, SOCK_RAW, IPPROTO_UDP)) == -1) {
+  if ((sfd = socket(AF_INET, SOCK_RAW, IPPROTO_RAW)) == -1) {
     char const *error = strerror(errno);
     char message[] = "Socket could not be created: ";
     throw std::runtime_error{strcat(message, error)};
@@ -164,57 +149,79 @@ int main(int argc, char *const argv[]) {
 
   // We set up the receiver.
   struct sockaddr_in addr;
-
   addr.sin_family = AF_INET;
   addr.sin_addr.s_addr = inet_addr(ip);
   addr.sin_port = htons(port);
 
-  // We start by filling the UDP header.
-  struct udphdr udp_header;
-  udp_header.uh_sport = my_addr.sin_port;
-  udp_header.uh_dport = addr.sin_port;
+  ///////////////////////////////////////////////////////////////////////////
+  // We start filing out the datagram
+  ///////////////////////////////////////////////////////////////////////////
 
-  constexpr std::uint16_t length_udp{sizeof(struct udphdr) + sizeof(payload)};
-  udp_header.len = htons(length_udp);
-  udp_header.check = 0;
+  std::array<char, 4096> datagram{};
+  struct iphdr *ip_header = (struct iphdr *)datagram.data();
+  struct udphdr *udp_header =
+      (struct udphdr *)(datagram.data() + sizeof(struct iphdr));
+  datagram.fill(0);
 
-  // Reference material: https://en.wikipedia.org/wiki/IPv4#Header
-  struct iphdr ip_header;
+  std::memcpy(datagram.data() + sizeof(struct iphdr) + sizeof(struct udphdr),
+              payload.c_str(), payload.size());
+
   // We are using IPv4.
-  ip_header.version = 4;
+  ip_header->version = 4;
   // Internet Header Length (IHL)
-  ip_header.ihl = 5;
+  ip_header->ihl = 5;
   // Type Of Service (TOS)
   // Reference material: https://en.wikipedia.org/wiki/Type_of_service
-  ip_header.tos = 0; // Best effort
-  constexpr std::uint32_t length_total{sizeof(struct iphdr) + length_udp};
-  ip_header.tot_len = length_total;
+  ip_header->tos = 0; // Best effort
+  ip_header->tot_len =
+      sizeof(struct iphdr) + sizeof(struct udphdr) + payload.size();
   // Identification
-  ip_header.id = 0;
-  ip_header.frag_off = 0;
+  ip_header->id = 0;
+  ip_header->frag_off = 0;
   // We do this with postcards too.
-  ip_header.saddr = my_addr.sin_addr.s_addr;
-  ip_header.daddr = addr.sin_addr.s_addr;
-  ip_header.ttl = 0xFF;
+  ip_header->saddr = inet_addr(my_ip);
+  ip_header->daddr = addr.sin_addr.s_addr;
+  ip_header->ttl = 64;
   // Reference material:
   // https://en.wikipedia.org/wiki/List_of_IP_protocol_numbers
-  ip_header.protocol = 0x11; // UDP
-  ip_header.check = 0;
+  ip_header->protocol = IPPROTO_UDP; // UDP
+  ip_header->check = 0;
 
-  // Let's compute the checksum.
-  std::array<std::uint16_t, sizeof(ip_header) / 2> ip_header_bin;
-  memcpy(&ip_header_bin, &ip_header, sizeof(ip_header));
+  udp_header->uh_sport = my_addr.sin_port;
+  udp_header->uh_dport = addr.sin_port;
+  udp_header->uh_ulen = htons(sizeof(struct udphdr) + payload.size());
+  udp_header->uh_sum = 0;
 
-  ip_header.check = compute_checksum(ip_header_bin);
-  udp_header.check = compute_udp_checksum(udp_header, ip_header);
+  ///////////////////////////////////////////////////////////////////////////
+  // We compute the checksums
+  ///////////////////////////////////////////////////////////////////////////
 
-  std::array<char, sizeof(ip_header)+sizeof(udp_header)+sizeof(payload)> packet{};
-  memcpy(packet.data(), &ip_header, sizeof(ip_header));
-  memcpy(packet.data() + sizeof(ip_header), &udp_header, sizeof(udp_header));
-  memcpy(packet.data() + sizeof(ip_header)+sizeof(udp_header), &payload, sizeof(payload));
+  ip_header->check =
+      csum((unsigned short *)datagram.data(), ip_header->tot_len);
 
-  if (sendto(sfd, packet.data(), ip_header.tot_len, 0, (struct sockaddr *)&addr,
-             sizeof(addr)) == -1) {
+  std::vector<char> checksum_buffer(sizeof(struct pseudohdr) +
+                                    sizeof(struct udphdr) + payload.size());
+  struct pseudohdr *pseudo_header = (struct pseudohdr *)checksum_buffer.data();
+  pseudo_header->source_address = ip_header->saddr;
+  pseudo_header->dest_address = ip_header->daddr;
+  pseudo_header->placeholder = 0;
+  pseudo_header->protocol = ip_header->protocol;
+  pseudo_header->udp_length = udp_header->uh_ulen;
+
+  std::memcpy(checksum_buffer.data() + sizeof(struct pseudohdr), udp_header,
+              sizeof(struct udphdr));
+  std::memcpy(checksum_buffer.data() + sizeof(struct pseudohdr) +
+                  sizeof(struct udphdr),
+              payload.c_str(), payload.size());
+
+  std::cout << get_byte_hexdump(checksum_buffer.data(), checksum_buffer.size())
+            << std::endl;
+
+  udp_header->uh_sum =
+      csum((unsigned short *)checksum_buffer.data(), checksum_buffer.size());
+
+  if (sendto(sfd, datagram.data(), ip_header->tot_len, 0,
+             (struct sockaddr *)&addr, sizeof(addr)) == -1) {
     char const *error = strerror(errno);
     char message[] = "sendto : ";
     throw std::runtime_error{strcat(message, error)};
