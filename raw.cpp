@@ -194,25 +194,19 @@ int main(int argc, char *const argv[]) {
 
   int sfd;
   if ((sfd = socket(AF_INET, SOCK_RAW, IPPROTO_RAW)) == -1) {
-    char const *error = strerror(errno);
-    char message[] = "Socket could not be created: ";
-    throw std::runtime_error{strcat(message, error)};
+    throw std::runtime_error{strerror(errno)};
   }
 
   const int hdr_included = 1;
   if (setsockopt(sfd, IPPROTO_IP, IP_HDRINCL, &hdr_included,
                  sizeof(hdr_included)) < 0) {
-    char const *error = strerror(errno);
-    char message[] = "Could not set IP_HDRINCL option: ";
-    throw std::runtime_error{strcat(message, error)};
+    throw std::runtime_error{strerror(errno)};
   }
 
   struct sockaddr_in my_addr;
   socklen_t my_addrlen = sizeof(my_addr);
   if (getsockname(sfd, (struct sockaddr *)&my_addr, &my_addrlen) == -1) {
-    char const *error = strerror(errno);
-    char message[] = "Could not get port from socket: ";
-    throw std::runtime_error{strcat(message, error)};
+    throw std::runtime_error{strerror(errno)};
   }
 
   // We set up the receiver.
@@ -239,7 +233,7 @@ int main(int argc, char *const argv[]) {
     while (datagram.size() - payload.size() >
                sizeof(struct iphdr) + sizeof(struct udphdr) &&
            checksum != target_checksum) {
-      payload.push_back((char) 1);
+      payload.push_back((char)1);
       fill_headers_from_payload(ip_header, udp_header, payload, my_ip, my_addr,
                                 addr);
       compute_checksums(datagram, ip_header, udp_header, payload);
@@ -252,7 +246,7 @@ int main(int argc, char *const argv[]) {
     }
     datagram.fill(0);
     fill_headers_from_payload(ip_header, udp_header, payload, my_ip, my_addr,
-                                addr);
+                              addr);
     std::memcpy(datagram.data() + sizeof(struct iphdr) + sizeof(struct udphdr),
                 payload.c_str(), payload.size());
     compute_checksums(datagram, ip_header, udp_header, payload);
@@ -275,9 +269,7 @@ int main(int argc, char *const argv[]) {
 
   if (sendto(sfd, datagram.data(), ip_header->tot_len, 0,
              (struct sockaddr *)&addr, sizeof(addr)) == -1) {
-    char const *error = strerror(errno);
-    char message[] = "sendto : ";
-    throw std::runtime_error{strcat(message, error)};
+    throw std::runtime_error{strerror(errno)};
   }
 
   close(sfd);

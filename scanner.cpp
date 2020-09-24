@@ -27,9 +27,7 @@ int main(int argc, char *const argv[]) {
 
   int sfd;
   if ((sfd = socket(AF_INET, (SOCK_DGRAM), 0)) == -1) {
-    char const *error = strerror(errno);
-    char message[] = "Socket could not be created: ";
-    throw std::runtime_error{strcat(message, error)};
+    throw std::runtime_error{strerror(errno)};
   }
 
   struct sockaddr_in addr;
@@ -58,9 +56,7 @@ int main(int argc, char *const argv[]) {
     Entry new_entry;
     if (recvfrom(sfd, &new_entry.buffer, buffer_size, 0,
                  (struct sockaddr *)&new_entry.src, &new_entry.src_len) == -1) {
-      char const *error = strerror(errno);
-      char message[] = "recvfrom : ";
-      throw std::runtime_error{strcat(message, error)};
+      throw std::runtime_error{strerror(errno)};
     };
 
     if (new_entry.src_len > 0) {
@@ -77,9 +73,7 @@ int main(int argc, char *const argv[]) {
 
     if (sendto(sfd, message.c_str(), message.size(), 0,
                (const struct sockaddr *)&addr, sizeof(addr)) == -1) {
-      char const *error = strerror(errno);
-      char message[] = "sendto : ";
-      throw std::runtime_error{strcat(message, error)};
+      throw std::runtime_error{strerror(errno)};
     }
 
     std::packaged_task<void()> task(handlerReceive);

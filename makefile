@@ -1,5 +1,5 @@
 CC=g++
-BIN=scanner mystery raw
+BIN=scanner mystery raw evil
 
 all: $(BIN)
 
@@ -11,6 +11,9 @@ mystery: mystery.cpp
 
 raw: raw.cpp 
 	$(CC) --std=c++11 raw.cpp -o raw -O3
+
+evil: evil.cpp
+	$(CC) --std=c++11 evil.cpp -o evil -O3
 
 .PHONY: clean
 

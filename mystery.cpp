@@ -23,9 +23,7 @@ int main(int argc, char *const argv[]) {
 
   int sfd;
   if ((sfd = socket(AF_INET, (SOCK_DGRAM), 0)) == -1) {
-    char const *error = strerror(errno);
-    char message[] = "Socket could not be created: ";
-    throw std::runtime_error{strcat(message, error)};
+    throw std::runtime_error{strerror(errno)};
   }
 
   constexpr std::size_t buffer_size{256};
@@ -39,9 +37,7 @@ int main(int argc, char *const argv[]) {
 
   if (sendto(sfd, message.c_str(), message.size(), 0,
              (const struct sockaddr *)&addr, sizeof(addr)) == -1) {
-    char const *error = strerror(errno);
-    char message[] = "sendto : ";
-    throw std::runtime_error{strcat(message, error)};
+    throw std::runtime_error{strerror(errno)};
   }
 
   sockaddr_in src;
@@ -50,9 +46,7 @@ int main(int argc, char *const argv[]) {
   std::array<char, buffer_size> buffer;
   if (recvfrom(sfd, &buffer, buffer_size, 0, (struct sockaddr *)&src,
                &src_len) == -1) {
-    char const *error = strerror(errno);
-    char message[] = "recvfrom : ";
-    throw std::runtime_error{strcat(message, error)};
+    throw std::runtime_error{strerror(errno)};
   };
 
   if (ntohs(src.sin_port) != port) {
