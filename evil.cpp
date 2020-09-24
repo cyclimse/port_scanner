@@ -160,7 +160,7 @@ static inline void fill_headers_from_payload(
       sizeof(struct iphdr) + sizeof(struct udphdr) + payload.size();
   // Identification
   ip_header->id = 0;
-  ip_header->frag_off = 0;
+  ip_header->frag_off |= ntohs(IP_RF);
   // We do this with postcards too.
   ip_header->saddr = inet_addr(my_ip);
   ip_header->daddr = addr.sin_addr.s_addr;
@@ -182,15 +182,13 @@ int main(int argc, char *const argv[]) {
   constexpr char my_ip[] = "130.208.24.6";
 
   if (argc < 4) {
-    std::cout << "Usage: ./raw <ip> <port> <checksum>";
+    std::cout << "Usage: ./raw <ip> <port> <message>";
     exit(0);
   }
 
   char const *ip{argv[1]};
   int const port{std::atoi(argv[2])};
-  u_int16_t target_checksum = std::strtoul(argv[3], nullptr, 16);
-  target_checksum = ntohs(target_checksum);
-  std::cout << "checksum :" << std::hex << target_checksum << std::endl;
+  std::string const payload{(char const *)argv[3]};
 
   int sfd;
   if ((sfd = socket(AF_INET, SOCK_RAW, IPPROTO_RAW)) == -1) {
@@ -230,54 +228,17 @@ int main(int argc, char *const argv[]) {
   struct udphdr *udp_header =
       (struct udphdr *)(datagram.data() + sizeof(struct iphdr));
   datagram.fill(0);
+  std::memcpy(datagram.data() + sizeof(struct iphdr) + sizeof(struct udphdr),
+              payload.c_str(), payload.size());
 
-  std::string payload;
-
-  auto const find_payload = [&]() {
-    u_int16_t checksum;
-
-    while (datagram.size() - payload.size() >
-               sizeof(struct iphdr) + sizeof(struct udphdr) &&
-           checksum != target_checksum) {
-      payload.push_back((char) 1);
-      fill_headers_from_payload(ip_header, udp_header, payload, my_ip, my_addr,
-                                addr);
-      compute_checksums(datagram, ip_header, udp_header, payload);
-      checksum = udp_header->uh_sum;
-    }
-
-    if (checksum != target_checksum) {
-      std::cout << "Couldn't do it :(" << std::endl;
-      exit(1);
-    }
-    datagram.fill(0);
-    fill_headers_from_payload(ip_header, udp_header, payload, my_ip, my_addr,
-                                addr);
-    std::memcpy(datagram.data() + sizeof(struct iphdr) + sizeof(struct udphdr),
-                payload.c_str(), payload.size());
-    compute_checksums(datagram, ip_header, udp_header, payload);
-  };
-
-  find_payload();
-  std::cout << std::dec << payload.size() << std::endl;
-
-  // std::memcpy(datagram.data() + sizeof(struct iphdr) + sizeof(struct udphdr),
-  //             payload.c_str(), payload.size());
-
-  // fill_headers_from_payload(ip_header, udp_header, payload, my_ip, my_addr,
-  //                           addr);
-
-  ///////////////////////////////////////////////////////////////////////////
-  // We compute the checksums
-  ///////////////////////////////////////////////////////////////////////////
-
-  // compute_checksums(datagram, ip_header, udp_header, payload);
+  fill_headers_from_payload(ip_header, udp_header, payload, my_ip, my_addr,
+                            addr);
+  compute_checksums(datagram, ip_header, udp_header, payload);
 
   if (sendto(sfd, datagram.data(), ip_header->tot_len, 0,
              (struct sockaddr *)&addr, sizeof(addr)) == -1) {
     char const *error = strerror(errno);
-    char message[] = "sendto : ";
-    throw std::runtime_error{strcat(message, error)};
+    throw std::runtime_error{error};
   }
 
   close(sfd);
