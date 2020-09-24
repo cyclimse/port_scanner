@@ -21,66 +21,6 @@
 #include <iomanip>
 #include <sstream>
 
-std::string get_byte_hexdump(void *buffer, int buflen) {
-  /**
-      Author Benedikt H. Thordarson.
-      Given buffer b, and length of b in bytes bufen,
-      print buffer in wireshark format.
-      output works for wireshark imports.
-  **/
-
-  // create byte buffer.
-  unsigned char *byte_buffer = (unsigned char *)buffer;
-  std::string hexdump = "";
-  for (int i = 0; i < buflen; i += 16) {
-    std::stringstream ss;
-    ss << std::hex << std::setfill('0');
-    // show addr offset
-    ss << std::setw(8) << std::hex << i;
-    int j = 0;
-
-    for (j = 0; j < 16; j++) {
-      // break before we go out of bounds
-      if (i + j == buflen) {
-        break;
-      }
-      // if we are at the 8B place, inject extra space
-      if (j % 8 == 0 && j != 0) {
-        ss << " ";
-      }
-      // inject space
-      ss << " " << std::hex << std::setw(2) << (unsigned int)byte_buffer[i + j];
-    }
-    // pad to length before we add our char printouts.
-    while (j < 16) {
-      ss << "   ";
-      j += 1;
-    }
-    // Add the char print.
-    ss << "\t| ";
-    for (j = 0; j < 16; j++) {
-      // do not go out of bounds.
-      if (i + j == buflen) {
-        break;
-      }
-      if (j % 8 == 0 && j != 0) {
-        ss << " ";
-      }
-      // if the character is not printable or is a newline, print a star.
-      if (byte_buffer[i + j] == (unsigned char)'\n' ||
-          !std::isprint(byte_buffer[i + j])) {
-        ss << "*";
-      } else {
-        ss << byte_buffer[i + j];
-      }
-    }
-    // add newline and append to dump.
-    ss << "\n";
-    hexdump += ss.str();
-  }
-  return hexdump;
-}
-
 struct pseudohdr {
   u_int32_t source_address;
   u_int32_t dest_address;
@@ -89,6 +29,7 @@ struct pseudohdr {
   u_int16_t udp_length;
 };
 
+// Reference: https://www.binarytides.com/raw-udp-sockets-c-linux/
 unsigned short csum(unsigned short *ptr, int nbytes) {
   register long sum;
   unsigned short oddbyte;
@@ -135,10 +76,6 @@ static inline void compute_checksums(std::array<char, N> &datagram,
   std::memcpy(checksum_buffer.data() + sizeof(struct pseudohdr) +
                   sizeof(struct udphdr),
               payload.c_str(), payload.size());
-
-  // std::cout << get_byte_hexdump(checksum_buffer.data(),
-  // checksum_buffer.size())
-  //           << std::endl;
 
   udp_header->uh_sum =
       csum((unsigned short *)checksum_buffer.data(), checksum_buffer.size());
@@ -215,10 +152,6 @@ int main(int argc, char *const argv[]) {
   addr.sin_addr.s_addr = inet_addr(ip);
   addr.sin_port = htons(port);
 
-  ///////////////////////////////////////////////////////////////////////////
-  // We start filing out the datagram
-  ///////////////////////////////////////////////////////////////////////////
-
   std::array<char, 10506> datagram{};
   struct iphdr *ip_header = (struct iphdr *)datagram.data();
   struct udphdr *udp_header =
@@ -241,7 +174,9 @@ int main(int argc, char *const argv[]) {
     }
 
     if (checksum != target_checksum) {
-      std::cout << "Couldn't do it :(" << std::endl;
+      std::cout << "Couldn't find checksum before running out of space in the "
+                   "datagram"
+                << std::endl;
       exit(1);
     }
     datagram.fill(0);
@@ -253,19 +188,6 @@ int main(int argc, char *const argv[]) {
   };
 
   find_payload();
-  std::cout << std::dec << payload.size() << std::endl;
-
-  // std::memcpy(datagram.data() + sizeof(struct iphdr) + sizeof(struct udphdr),
-  //             payload.c_str(), payload.size());
-
-  // fill_headers_from_payload(ip_header, udp_header, payload, my_ip, my_addr,
-  //                           addr);
-
-  ///////////////////////////////////////////////////////////////////////////
-  // We compute the checksums
-  ///////////////////////////////////////////////////////////////////////////
-
-  // compute_checksums(datagram, ip_header, udp_header, payload);
 
   if (sendto(sfd, datagram.data(), ip_header->tot_len, 0,
              (struct sockaddr *)&addr, sizeof(addr)) == -1) {
